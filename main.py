@@ -4,17 +4,13 @@ import sys
 from extractor import WebsiteExtractor
 from analyzer import LeadershipAnalyzer
 
-from utils import (
-    load_websites,
-)
 from storage import (
     initialize_storage,
     close_storage,
     append_result,
     append_failed,
     load_completed_websites,
-    sync_websites,
-    load_websites as load_websites_from_store,
+    load_websites,
 )
 
 CONCURRENCY = 30
@@ -131,15 +127,12 @@ async def main():
 
     await initialize_storage()
 
-    local_websites = load_websites(
-        "input/websites.txt"
-    )
+    websites = await load_websites()
 
-    await sync_websites(local_websites)
-
-    websites = await load_websites_from_store(
-        local_websites
-    )
+    if not websites:
+        print("No websites found in Supabase table scrape_websites")
+        await close_storage()
+        return
 
     completed = await load_completed_websites()
 
