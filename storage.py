@@ -27,6 +27,13 @@ CREATE TABLE IF NOT EXISTS scrape_failed (
 )
 """
 
+WEBSITES_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS scrape_websites (
+    website TEXT PRIMARY KEY,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)
+"""
+
 
 class ResultStore:
 
@@ -108,6 +115,7 @@ class ResultStore:
 
             await self.conn.execute(RESULTS_TABLE_SQL)
             await self.conn.execute(FAILED_TABLE_SQL)
+            await self.conn.execute(WEBSITES_TABLE_SQL)
 
     async def append_result(self, website, role, full_name):
 
@@ -186,6 +194,54 @@ class ResultStore:
 
         return completed
 
+    async def sync_websites(self, websites):
+
+        if self.mode != "supabase":
+            return
+
+        normalized = list(dict.fromkeys(
+            website.strip()
+            for website in websites
+            if website and website.strip()
+        ))
+
+        async with self.lock:
+
+            await self.conn.execute("DELETE FROM scrape_websites")
+
+            if not normalized:
+                return
+
+            await self.conn.executemany(
+                """
+                INSERT INTO scrape_websites (website)
+                VALUES (%s)
+                """,
+                [(website,) for website in normalized],
+            )
+
+    async def load_websites(self, fallback_websites=None):
+
+        if self.mode == "supabase":
+
+            async with self.lock:
+
+                async with self.conn.cursor(row_factory=dict_row) as cur:
+                    await cur.execute(
+                        "SELECT website FROM scrape_websites ORDER BY created_at, website"
+                    )
+                    rows = await cur.fetchall()
+
+            return [
+                row["website"]
+                for row in rows
+            ]
+
+        if fallback_websites is not None:
+            return list(dict.fromkeys(fallback_websites))
+
+        return []
+
 
 store = ResultStore()
 
@@ -213,3 +269,13 @@ async def append_failed(website):
 async def load_completed_websites():
 
     return await store.load_completed_websites()
+
+
+async def sync_websites(websites):
+
+    await store.sync_websites(websites)
+
+
+async def load_websites(fallback_websites=None):
+
+    return await store.load_websites(fallback_websites)

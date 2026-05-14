@@ -13,6 +13,8 @@ from storage import (
     append_result,
     append_failed,
     load_completed_websites,
+    sync_websites,
+    load_websites as load_websites_from_store,
 )
 
 CONCURRENCY = 30
@@ -129,8 +131,14 @@ async def main():
 
     await initialize_storage()
 
-    websites = load_websites(
+    local_websites = load_websites(
         "input/websites.txt"
+    )
+
+    await sync_websites(local_websites)
+
+    websites = await load_websites_from_store(
+        local_websites
     )
 
     completed = await load_completed_websites()

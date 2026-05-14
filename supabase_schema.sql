@@ -11,3 +11,8 @@ create table if not exists scrape_failed (
   website text not null,
   created_at timestamptz not null default now()
 );
+
+create table if not exists scrape_websites (
+  website text primary key,
+  created_at timestamptz not null default now()
+);
