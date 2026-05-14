@@ -1,246 +1,129 @@
 import asyncio
-import csv
+import json
 import os
-from urllib.parse import quote, urlparse
+from urllib.error import HTTPError
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
-import psycopg
-from psycopg.rows import dict_row
-
-RESULTS_FILE = "output/results.csv"
-FAILED_FILE = "output/failed.csv"
-
-RESULTS_TABLE_SQL = """
-CREATE TABLE IF NOT EXISTS scrape_results (
-    id BIGSERIAL PRIMARY KEY,
-    website TEXT NOT NULL,
-    role TEXT NOT NULL,
-    full_name TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-)
-"""
-
-FAILED_TABLE_SQL = """
-CREATE TABLE IF NOT EXISTS scrape_failed (
-    id BIGSERIAL PRIMARY KEY,
-    website TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-)
-"""
-
-WEBSITES_TABLE_SQL = """
-CREATE TABLE IF NOT EXISTS scrape_websites (
-    website TEXT PRIMARY KEY,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-)
-"""
+RESULTS_TABLE = "scrape_results"
+FAILED_TABLE = "scrape_failed"
+WEBSITES_TABLE = "scrape_websites"
 
 
 class ResultStore:
 
     def __init__(self):
 
-        self.mode = "csv"
-        self.conn = None
-        self.lock = asyncio.Lock()
+        self.base_url = os.getenv("SUPABASE_URL", "").rstrip("/")
+        self.api_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "").strip()
 
-    def _has_supabase_config(self):
+    def _headers(self):
 
-        return all([
-            os.getenv("SUPABASE_URL"),
-            os.getenv("SUPABASE_DB_PASSWORD"),
-        ])
+        if not self.base_url or not self.api_key:
+            raise RuntimeError("SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing")
 
-    def _build_dsn(self):
+        return {
+            "apikey": self.api_key,
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "Prefer": "return=representation",
+        }
 
-        supabase_url = os.getenv("SUPABASE_URL", "").strip()
-        password = os.getenv("SUPABASE_DB_PASSWORD", "").strip()
+    def _request(self, method, path, params=None, body=None):
 
-        parsed = urlparse(supabase_url)
-        host = parsed.hostname or ""
+        url = f"{self.base_url}/rest/v1/{path}"
 
-        if not host:
-            raise RuntimeError("SUPABASE_URL is invalid")
+        if params:
+            url = f"{url}?{urlencode(params)}"
 
-        if not host.startswith("db."):
-            host = f"db.{host}"
+        data = None
 
-        encoded_password = quote(password, safe="")
+        if body is not None:
+            data = json.dumps(body).encode("utf-8")
 
-        return (
-            f"postgresql://postgres:{encoded_password}"
-            f"@{host}:5432/postgres?sslmode=require"
+        req = Request(
+            url,
+            data=data,
+            headers=self._headers(),
+            method=method,
         )
+
+        with urlopen(req, timeout=120) as resp:
+            payload = resp.read().decode("utf-8")
+            return json.loads(payload) if payload else []
 
     async def start(self):
 
-        if self._has_supabase_config():
-
-            self.mode = "supabase"
-            dsn = self._build_dsn()
-            self.conn = await psycopg.AsyncConnection.connect(dsn)
-            self.conn.autocommit = True
-            await self._ensure_schema()
-            return
-
-        self.mode = "csv"
-        self._ensure_csv_files()
+        if not self.base_url or not self.api_key:
+            raise RuntimeError(
+                "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required"
+            )
 
     async def close(self):
 
-        if self.conn:
-            await self.conn.close()
-            self.conn = None
-
-    def _ensure_csv_files(self):
-
-        os.makedirs("output", exist_ok=True)
-
-        if not os.path.exists(RESULTS_FILE):
-
-            with open(RESULTS_FILE, "w", newline="") as f:
-
-                writer = csv.writer(f)
-                writer.writerow(["website", "role", "full_name"])
-
-        if not os.path.exists(FAILED_FILE):
-
-            with open(FAILED_FILE, "w", newline="") as f:
-
-                writer = csv.writer(f)
-                writer.writerow(["website"])
-
-    async def _ensure_schema(self):
-
-        async with self.lock:
-
-            await self.conn.execute(RESULTS_TABLE_SQL)
-            await self.conn.execute(FAILED_TABLE_SQL)
-            await self.conn.execute(WEBSITES_TABLE_SQL)
+        return None
 
     async def append_result(self, website, role, full_name):
 
-        if self.mode == "supabase":
-
-            async with self.lock:
-
-                await self.conn.execute(
-                    """
-                    INSERT INTO scrape_results (website, role, full_name)
-                    VALUES (%s, %s, %s)
-                    """,
-                    (website, role, full_name),
-                )
-
-            return
-
-        self._ensure_csv_files()
-
-        with open(RESULTS_FILE, "a", newline="") as f:
-
-            writer = csv.writer(f)
-            writer.writerow([website, role, full_name])
+        await asyncio.to_thread(
+            self._request,
+            "POST",
+            RESULTS_TABLE,
+            None,
+            {
+                "website": website,
+                "role": role,
+                "full_name": full_name,
+            },
+        )
 
     async def append_failed(self, website):
 
-        if self.mode == "supabase":
-
-            async with self.lock:
-
-                await self.conn.execute(
-                    """
-                    INSERT INTO scrape_failed (website)
-                    VALUES (%s)
-                    """,
-                    (website,),
-                )
-
-            return
-
-        self._ensure_csv_files()
-
-        with open(FAILED_FILE, "a", newline="") as f:
-
-            writer = csv.writer(f)
-            writer.writerow([website])
+        await asyncio.to_thread(
+            self._request,
+            "POST",
+            FAILED_TABLE,
+            None,
+            {
+                "website": website,
+            },
+        )
 
     async def load_completed_websites(self):
 
-        if self.mode == "supabase":
+        rows = await asyncio.to_thread(
+            self._request,
+            "GET",
+            RESULTS_TABLE,
+            {
+                "select": "website",
+            },
+            None,
+        )
 
-            async with self.lock:
+        return {
+            row["website"]
+            for row in rows
+            if row.get("website")
+        }
 
-                async with self.conn.cursor(row_factory=dict_row) as cur:
-                    await cur.execute(
-                        "SELECT DISTINCT website FROM scrape_results"
-                    )
-                    rows = await cur.fetchall()
+    async def load_websites(self):
 
-            return {
-                row["website"]
-                for row in rows
-            }
+        rows = await asyncio.to_thread(
+            self._request,
+            "GET",
+            WEBSITES_TABLE,
+            {
+                "select": "website",
+            },
+            None,
+        )
 
-        completed = set()
-
-        if not os.path.exists(RESULTS_FILE):
-            return completed
-
-        with open(RESULTS_FILE, "r") as f:
-
-            reader = csv.DictReader(f)
-
-            for row in reader:
-                completed.add(row["website"])
-
-        return completed
-
-    async def sync_websites(self, websites):
-
-        if self.mode != "supabase":
-            return
-
-        normalized = list(dict.fromkeys(
-            website.strip()
-            for website in websites
-            if website and website.strip()
-        ))
-
-        async with self.lock:
-
-            await self.conn.execute("DELETE FROM scrape_websites")
-
-            if not normalized:
-                return
-
-            await self.conn.executemany(
-                """
-                INSERT INTO scrape_websites (website)
-                VALUES (%s)
-                """,
-                [(website,) for website in normalized],
-            )
-
-    async def load_websites(self, fallback_websites=None):
-
-        if self.mode == "supabase":
-
-            async with self.lock:
-
-                async with self.conn.cursor(row_factory=dict_row) as cur:
-                    await cur.execute(
-                        "SELECT website FROM scrape_websites ORDER BY created_at, website"
-                    )
-                    rows = await cur.fetchall()
-
-            return [
-                row["website"]
-                for row in rows
-            ]
-
-        if fallback_websites is not None:
-            return list(dict.fromkeys(fallback_websites))
-
-        return []
+        return [
+            row["website"]
+            for row in rows
+            if row.get("website")
+        ]
 
 
 store = ResultStore()
@@ -271,11 +154,6 @@ async def load_completed_websites():
     return await store.load_completed_websites()
 
 
-async def sync_websites(websites):
+async def load_websites():
 
-    await store.sync_websites(websites)
-
-
-async def load_websites(fallback_websites=None):
-
-    return await store.load_websites(fallback_websites)
+    return await store.load_websites()
