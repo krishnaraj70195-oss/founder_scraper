@@ -6,7 +6,10 @@ from analyzer import LeadershipAnalyzer
 
 from utils import (
     load_websites,
-    create_output_files,
+)
+from storage import (
+    initialize_storage,
+    close_storage,
     append_result,
     append_failed,
     load_completed_websites,
@@ -49,7 +52,7 @@ async def process_website(
                     f"(Failures: {consecutive_failures})"
                 )
 
-                append_failed(website)
+                await append_failed(website)
 
                 check_failure_limit()
 
@@ -66,7 +69,7 @@ async def process_website(
                     f"(Failures: {consecutive_failures})"
                 )
 
-                append_failed(website)
+                await append_failed(website)
 
                 check_failure_limit()
 
@@ -74,7 +77,7 @@ async def process_website(
 
             for person in people:
 
-                append_result(
+                await append_result(
                     website,
                     person["role"],
                     person["full_name"]
@@ -96,7 +99,7 @@ async def process_website(
                 f"(Failures: {consecutive_failures})"
             )
 
-            append_failed(website)
+            await append_failed(website)
 
             check_failure_limit()
 
@@ -124,13 +127,13 @@ def check_failure_limit():
 
 async def main():
 
-    create_output_files()
+    await initialize_storage()
 
     websites = load_websites(
         "input/websites.txt"
     )
 
-    completed = load_completed_websites()
+    completed = await load_completed_websites()
 
     websites = [
         w for w in websites
@@ -163,6 +166,7 @@ async def main():
     await asyncio.gather(*tasks)
 
     await extractor.close()
+    await close_storage()
 
     print("DONE")
 

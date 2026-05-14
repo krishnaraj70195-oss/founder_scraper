@@ -3,3 +3,4 @@ openai
 pandas
 aiofiles
 python-dotenv
+psycopg[binary]
