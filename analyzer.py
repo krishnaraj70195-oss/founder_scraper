@@ -7,7 +7,7 @@ from prompts import SYSTEM_PROMPT, build_user_prompt
 
 load_dotenv()
 
-MODEL = "gpt-4.1-nano"
+MODEL = "gpt-4.1-mini"
 
 client = AsyncOpenAI()
 
@@ -43,10 +43,6 @@ class LeadershipAnalyzer:
 
             output = response.choices[0].message.content.strip()
 
-            print("\n========== AI OUTPUT ==========")
-            print(output)
-            print("================================\n")
-
             return self.parse_output(output)
 
         except Exception as e:
@@ -68,10 +64,7 @@ class LeadershipAnalyzer:
 
         for line in lines:
 
-            print(f"[PARSING LINE] {line}")
-
             if "|" not in line:
-                print("[INVALID FORMAT]")
                 continue
 
             parts = line.split("|", 1)
@@ -82,9 +75,6 @@ class LeadershipAnalyzer:
 
             role = parts[0].strip()
             name = parts[1].strip()
-
-            print(f"[ROLE] {role}")
-            print(f"[NAME] {name}")
 
             role_lower = role.lower()
 
@@ -100,17 +90,14 @@ class LeadershipAnalyzer:
             )
 
             if not valid_role:
-                print("[ROLE REJECTED]")
                 continue
 
             if not self.is_valid_name(name):
-                print("[NAME REJECTED]")
                 continue
 
             key = f"{role}-{name.lower()}"
 
             if key in seen:
-                print("[DUPLICATE]")
                 continue
 
             seen.add(key)
@@ -119,8 +106,6 @@ class LeadershipAnalyzer:
                 "role": role,
                 "full_name": name
             })
-
-        print(f"[FINAL RESULTS] {results}")
 
         return results
 

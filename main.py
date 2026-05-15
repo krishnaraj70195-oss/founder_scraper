@@ -1,4 +1,5 @@
 import asyncio
+import os
 import sys
 
 from extractor import WebsiteExtractor
@@ -13,7 +14,7 @@ from storage import (
     load_websites,
 )
 
-CONCURRENCY = 30
+CONCURRENCY = int(os.getenv("CONCURRENCY", "5"))
 
 MAX_CONSECUTIVE_FAILURES = 50
 

@@ -67,9 +67,7 @@ class WebsiteExtractor:
 
             return markdown[:MAX_TEXT_LENGTH]
 
-        except Exception as e:
-
-            print(f"[CRAWL ERROR] {url} -> {e}")
+        except Exception:
 
             return ""
 
@@ -123,7 +121,7 @@ class WebsiteExtractor:
                         except Exception:
                             pass
 
-        return found[:10]
+        return found[:5]
 
     async def scrape_website(self, website):
 
